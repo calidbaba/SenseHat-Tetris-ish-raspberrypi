@@ -13,10 +13,10 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <inttypes.h>
 #include <dirent.h>
 #include <dirent.h>
 #include <glob.h>
+#include <stdint.h>
 
 
 // The game state can be used to detect what happens on the playfield
@@ -25,7 +25,7 @@
 #define ROW_CLEAR  (1 << 1)
 #define TILE_ADDED (1 << 2)
 #define LED_NUMBER 64
-#define SIZE (sizeof(uint16_t)*LED_NUMBER)
+#define SIZE (sizeof(uint16_t) * LED_NUMBER)
 
 /* struct input_event { */
 /*     struct timeval time; */
@@ -79,7 +79,6 @@ gameConfig game = {
 };
 
 uint16_t *mapping;
-uint16_t *startOfMap;
 int eventFd;
 
 bool initializeJoystick(){
@@ -101,7 +100,7 @@ bool initializeJoystick(){
     i = 0;
 
     while(globbuf.gl_pathv[i]){
-        eventFd = open(globbuf.gl_pathv[i], O_RDWR | O_NONBLOCK);
+        eventFd = open(globbuf.gl_pathv[i], O_RDONLY | O_NONBLOCK);
         if(eventFd < 0){
             close(eventFd);
             i++;
@@ -175,9 +174,9 @@ bool initializeSenseHat() {
             return false;
         }
         close(fd);
-        startOfMap = mapping;
+        mapping = mapping;
         memset(mapping, 0, SIZE);
-        return initializeJoystick;
+        return initializeJoystick();
     }
     return false;
 }
@@ -185,7 +184,10 @@ bool initializeSenseHat() {
 // This function is called when the application exits
 // Here you can free up everything that you might have opened/allocated
 void freeSenseHat() {
-    free(mapping);
+    int check;
+
+    check = munmap(mapping, SIZE);
+    if(check < 0) printf("failed to free mapping\n");
 }
 
 uint16_t getRandomBytes(){
@@ -206,21 +208,27 @@ uint16_t getRandomBytes(){
 // !!! when nothing was pressed you MUST return 0 !!!
 int readSenseHatJoystick() {
 
-    struct pollfd pollEvent = {
-       .fd = eventFd,
-       .events = POLLIN
-    };
+    /* struct pollfd pollEvent = { */
+    /*    .fd = eventFd, */
+    /*    .events = POLLIN */
+    /* }; */
+    struct pollfd pollEvent[1];
     ssize_t r;
     struct input_event input;
+    pollEvent[0].fd = eventFd;
+    pollEvent[0].events = POLLIN;
 
 
-    if (poll(&pollEvent, 1, 0)) {
+    if (poll(pollEvent, 1, 0)) {
         r = read(eventFd,&input,sizeof(input));
         if(r != sizeof(input)){
             return 0;
         }
+        if(input.value == 0){
+            return 0;
+        }
         switch (input.code) {
-            case 23: return KEY_ENTER;
+            case 28: return KEY_ENTER;
             case 103: return KEY_UP;
             case 108: return KEY_DOWN;
             case 106: return KEY_RIGHT;
@@ -238,10 +246,10 @@ void renderSenseHatMatrix(bool const playfieldChanged) {
     for (int y = 0; y <game.grid.y; y++){
         for (int x = 0; x < game.grid.x; x++) {
             if(game.playfield[y][x].occupied){
-                *(startOfMap +x + (y*8)) = game.playfield[y][x].color;
+                *(mapping +x + (y*8)) = game.playfield[y][x].color;
             }
             else{
-                *(startOfMap +x + (y*8)) = 0x000000;
+                *(mapping +x + (y*8)) = 0x000000;
             }
         }
     }
@@ -588,7 +596,12 @@ int main(int argc, char **argv) {
     }
     game.tick = (game.tick + 1) % game.nextGameTick;
   }
-
+  for (int i=0; i<3; i++){
+      memset(mapping, 0xff80, SIZE);
+      usleep(30*10000);
+      memset(mapping, 0x00, SIZE);
+      usleep(30*10000);
+  }
   freeSenseHat();
   free(game.playfield);
   free(game.rawPlayfield);
